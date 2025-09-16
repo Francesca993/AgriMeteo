@@ -7,7 +7,6 @@ import Navigation from "./components/Navigation";
 import Index from "./pages/Index";
 import Map from "./pages/Map";
 import About from "./pages/About";
-import AreaSelection from "./pages/AreaSelection";
 import WeatherData from "./pages/WeatherData";
 import SprayabilityIndices from "./pages/SprayabilityIndices";
 import ConditionsAnalysis from "./pages/ConditionsAnalysis";
@@ -26,7 +25,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/map" element={<Map />} />
           <Route path="/about" element={<About />} />
-          <Route path="/selezione-aree" element={<AreaSelection />} />
+          {/* Route '/selezione-aree' removed (AreaSelection page deleted) */}
           <Route path="/dati-meteo" element={<WeatherData />} />
           <Route path="/indici-sprayability" element={<SprayabilityIndices />} />
           <Route path="/analisi-condizioni" element={<ConditionsAnalysis />} />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents, Circle } from 'react-leaflet';
 import L from 'leaflet';
 // Vite-friendly imports for leaflet marker images
@@ -8,68 +8,231 @@ import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png?url';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Cloud, 
-  Wind, 
-  Thermometer, 
-  Droplets, 
-  MapPin, 
+import {
+  Cloud,
+  Wind,
+  Thermometer,
+  Droplets,
+  MapPin,
   Download,
   Share2,
-  AlertTriangle
+  AlertTriangle,
 } from 'lucide-react';
 
-// Fix default icon paths for leaflet when using bundlers
-// Ensure default icon images are set correctly (avoid runtime require in browser)
+// ---------- Leaflet icon fix (Vite/Next bundlers) ----------
 try {
-  delete (L.Icon.Default.prototype as any)._getIconUrl;
-} catch (e) {
-  // ignore
-}
+  // @ts-ignore
+  delete L.Icon.Default.prototype._getIconUrl;
+} catch {}
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2xUrl,
   iconUrl: markerIconUrl,
-  shadowUrl: markerShadowUrl
+  shadowUrl: markerShadowUrl,
 });
+
+// ---------- Helpers ----------
+type HourPoint = {
+  ts: string; // ISO string in Europe/Rome
+  temp_c: number | null;
+  rh_pct: number | null;
+  rain_mm: number | null;
+  wind_ms: number | null;
+  gust_ms: number | null;
+  wind_dir_deg: number | null;
+};
+
+type WeatherNorm = {
+  provider: string;
+  timezone: string;
+  hourly: HourPoint[];
+  current?: {
+    temp_c: number | null;
+    rh_pct: number | null;
+    rain_mm: number | null;
+    wind_ms: number | null;
+    gust_ms: number | null;
+    wind_dir_deg: number | null;
+  };
+};
 
 const center = { lat: 44.4968, lng: 11.3548 }; // default center (Italy)
 
+function hhmm(ts: string) {
+  try {
+    return new Date(ts).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return ts;
+  }
+}
+
+function sum(arr: (number | null | undefined)[]) {
+  return arr.reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0);
+}
+
+// Sprayability rules v0
+function labelSprayability(
+  h: HourPoint,
+  rainNext6h: number
+): 'Buona' | 'Discreta' | 'Scarsa' {
+  const windOk = (h.wind_ms ?? Infinity) <= 4;
+  const gustOk = h.gust_ms == null || h.gust_ms <= 6;
+  const rainOk = rainNext6h <= 0.2;
+  const tempOk = h.temp_c != null && h.temp_c >= 8 && h.temp_c <= 30;
+  const rhOk = h.rh_pct != null && h.rh_pct >= 30 && h.rh_pct <= 90;
+
+  const good = windOk && gustOk && rainOk && tempOk && rhOk;
+  if (good) return 'Buona';
+
+  const fair =
+    (h.wind_ms ?? Infinity) <= 6 &&
+    rainNext6h <= 0.5; // condizioni minime accettabili
+  if (fair) return 'Discreta';
+
+  return 'Scarsa';
+}
+
+function computeWindows(
+  labels: { ts: string; label: 'Buona' | 'Discreta' | 'Scarsa' }[],
+  minHours = 2
+) {
+  const wins: { start: string; end: string; label: string }[] = [];
+  let start: string | null = null;
+  for (let i = 0; i < labels.length; i++) {
+    const ok = labels[i].label === 'Buona' || labels[i].label === 'Discreta';
+    if (ok && !start) start = labels[i].ts;
+    if ((!ok || i === labels.length - 1) && start) {
+      const end = ok && i === labels.length - 1 ? labels[i].ts : labels[i - 1].ts;
+      // check duration
+      const hours =
+        (new Date(end).getTime() - new Date(start).getTime()) / (1000 * 60 * 60) + 1e-9;
+      if (hours >= minHours - 1e-6) wins.push({ start, end, label: 'Buona/Discreta' });
+      start = null;
+    }
+  }
+  return wins;
+}
+
+// ---------- Map click handler ----------
 function ClickHandler({ onSelect }: { onSelect: (latlng: { lat: number; lng: number }) => void }) {
   useMapEvents({
     click(e) {
       onSelect({ lat: e.latlng.lat, lng: e.latlng.lng });
-    }
+    },
   });
   return null;
 }
 
+// ---------- API (Open-Meteo) ----------
+async function fetchOpenMeteo(lat: number, lon: number): Promise<WeatherNorm> {
+  const url = new URL('https://api.open-meteo.com/v1/forecast');
+  url.search = new URLSearchParams({
+    latitude: lat.toFixed(4),
+    longitude: lon.toFixed(4),
+    timezone: 'Europe/Rome',
+    forecast_days: '2', // ~48h
+    current:
+      'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m',
+    hourly:
+      'temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m',
+  }).toString();
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error('Errore Open-Meteo');
+  const j = await res.json();
+
+  const H = j.hourly;
+  const out: HourPoint[] = H.time.map((ts: string, i: number) => ({
+    ts,
+    temp_c: H.temperature_2m?.[i] ?? null,
+    rh_pct: H.relative_humidity_2m?.[i] ?? null,
+    rain_mm: H.precipitation?.[i] ?? null,
+    wind_ms: H.wind_speed_10m?.[i] ?? null,
+    gust_ms: H.wind_gusts_10m?.[i] ?? null,
+    wind_dir_deg: H.wind_direction_10m?.[i] ?? null,
+  }));
+
+  const current = j.current
+    ? {
+        temp_c: j.current.temperature_2m ?? null,
+        rh_pct: j.current.relative_humidity_2m ?? null,
+        rain_mm: j.current.precipitation ?? null,
+        wind_ms: j.current.wind_speed_10m ?? null,
+        gust_ms: j.current.wind_gusts_10m ?? null,
+        wind_dir_deg: j.current.wind_direction_10m ?? null,
+      }
+    : undefined;
+
+  return { provider: 'open-meteo', timezone: j.timezone, hourly: out, current };
+}
+
+// ---------- Component ----------
 const Map = () => {
   const [selectedArea, setSelectedArea] = useState<{ lat: number; lng: number } | null>(null);
+  const [weather, setWeather] = useState<WeatherNorm | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const mockWeatherData = {
-    current: {
-      temperature: 22,
-      humidity: 65,
-      windSpeed: 3.2,
-      precipitation: 0,
-    },
-    forecast: Array.from({ length: 24 }, (_, i) => ({
-      hour: i,
-      temperature: 20 + Math.random() * 8,
-      humidity: 60 + Math.random() * 30,
-      windSpeed: 2 + Math.random() * 6,
-      precipitation: Math.random() * 2,
-      sprayability: Math.random() > 0.4 ? (Math.random() > 0.3 ? 'Buona' : 'Discreta') : 'Scarsa'
-    }))
-  };
+  // Fetch weather when selecting a point
+  useEffect(() => {
+    if (!selectedArea) return;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      setWeather(null);
+      try {
+        const data = await fetchOpenMeteo(selectedArea.lat, selectedArea.lng);
+        setWeather(data);
+      } catch (e: any) {
+        setError(e?.message || 'Errore sconosciuto');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [selectedArea?.lat, selectedArea?.lng]);
+
+  // Compute sprayability labels & windows
+  const sprayability = useMemo(() => {
+    if (!weather?.hourly?.length) return { labels: [] as { ts: string; label: 'Buona' | 'Discreta' | 'Scarsa' }[], windows: [] as { start: string; end: string; label: string }[] };
+    const H = weather.hourly;
+    const labels = H.map((h, i) => {
+      // somma pioggia nelle 6 ore successive (inclusa corrente?)
+      const rainNext6h = sum(H.slice(i, i + 6).map((x) => x.rain_mm ?? 0));
+      return { ts: h.ts, label: labelSprayability(h, rainNext6h) };
+    });
+    const windows = computeWindows(labels, 2);
+    return { labels, windows };
+  }, [weather?.hourly]);
+
+  // slice 24h
+  const next24 = sprayability.labels.slice(0, 24);
 
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
+      {/* Header portato da AreaSelection: badge, titolo e descrizione */}
+      <div className="container mx-auto px-4 py-4 max-w-4xl">
+        <div className="text-center mb-8">
+          <Badge className="bg-primary/10 text-primary mb-2 px-2 py-0.5 text-xs">
+            Selezione Aree
+          </Badge>
+          <h1 className="text-3xl font-semibold mb-2 text-foreground">Seleziona la tua area</h1>
+          <p className="text-base text-muted-foreground max-w-2xl mx-auto">
+            Identifica con precisione la tua zona di interesse usando gli strumenti di selezione
+            sulla mappa interattiva per ottenere dati meteo locali e indici di sprayability.
+          </p>
+        </div>
+      </div>
+
       <div className="flex h-[calc(100vh-4rem)]">
         {/* Map Area */}
         <div className="flex-1 relative">
           <MapContainer {...({ center: [center.lat, center.lng], zoom: 6, className: 'w-full h-full' } as any)}>
-            <TileLayer {...({ attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png' } as any)} />
+            <TileLayer
+              {...({
+                attribution:
+                  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              } as any)}
+            />
             <ClickHandler onSelect={(latlng) => setSelectedArea(latlng)} />
 
             {selectedArea && (
@@ -86,7 +249,9 @@ const Map = () => {
           <div className="absolute top-4 left-4 z-50">
             <Card className="shadow-card-soft">
               <CardContent className="p-4">
-                <p className="text-sm text-muted-foreground mb-2">Clicca sulla mappa per selezionare un'area</p>
+                <p className="text-sm text-muted-foreground mb-2">
+                  Clicca sulla mappa per selezionare un&apos;area
+                </p>
                 {selectedArea && (
                   <div className="text-xs text-foreground">
                     Lat: {selectedArea.lat.toFixed(5)}, Lng: {selectedArea.lng.toFixed(5)}
@@ -102,92 +267,126 @@ const Map = () => {
           {!selectedArea ? (
             <div className="p-6 text-center">
               <MapPin className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">Seleziona un'area</h3>
+              <h3 className="text-lg font-semibold mb-2">Seleziona un&apos;area</h3>
               <p className="text-muted-foreground">
                 Clicca sulla mappa per visualizzare i dati meteo e gli indici di sprayability
               </p>
             </div>
           ) : (
             <div className="p-6 space-y-6">
+              {/* Loading / Error */}
+              {loading && (
+                <Card className="shadow-card-soft">
+                  <CardContent className="p-4 text-sm text-muted-foreground">
+                    Recupero dati meteo…
+                  </CardContent>
+                </Card>
+              )}
+              {error && (
+                <Card className="shadow-card-soft border-destructive">
+                  <CardContent className="p-4 text-sm text-destructive">
+                    {error} — riprova più tardi.
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Current Weather */}
-              <Card className="shadow-card-soft">
-                <CardHeader>
-                  <CardTitle className="flex items-center text-lg">
-                    <Cloud className="w-5 h-5 mr-2 text-primary" />
-                    Condizioni Attuali
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center space-x-2">
-                      <Thermometer className="w-4 h-4 text-agricultural-earth" />
-                      <span className="text-sm">{mockWeatherData.current.temperature}°C</span>
+              {!loading && weather && (
+                <Card className="shadow-card-soft">
+                  <CardHeader>
+                    <CardTitle className="flex items-center text-lg">
+                      <Cloud className="w-5 h-5 mr-2 text-primary" />
+                      Condizioni Attuali
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center space-x-2">
+                        <Thermometer className="w-4 h-4 text-agricultural-earth" />
+                        <span className="text-sm">
+                          {weather.current?.temp_c != null ? `${weather.current?.temp_c}°C` : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Droplets className="w-4 h-4 text-agricultural-sky" />
+                        <span className="text-sm">
+                          {weather.current?.rh_pct != null ? `${weather.current?.rh_pct}%` : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Wind className="w-4 h-4 text-agricultural-green" />
+                        <span className="text-sm">
+                          {weather.current?.wind_ms != null ? `${weather.current?.wind_ms} m/s` : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Cloud className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm">
+                          {weather.current?.rain_mm != null ? `${weather.current?.rain_mm} mm` : '—'}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Droplets className="w-4 h-4 text-agricultural-sky" />
-                      <span className="text-sm">{mockWeatherData.current.humidity}%</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Wind className="w-4 h-4 text-agricultural-green" />
-                      <span className="text-sm">{mockWeatherData.current.windSpeed} m/s</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Cloud className="w-4 h-4 text-muted-foreground" />
-                      <span className="text-sm">{mockWeatherData.current.precipitation} mm</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Sprayability Index */}
-              <Card className="shadow-card-soft">
-                <CardHeader>
-                  <CardTitle className="flex items-center text-lg">
-                    <AlertTriangle className="w-5 h-5 mr-2 text-primary" />
-                    Indice Sprayability (24h)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {mockWeatherData.forecast.slice(0, 24).map((hour) => (
-                      <div key={hour.hour} className="flex items-center justify-between py-1">
-                        <span className="text-sm text-muted-foreground">
-                          {hour.hour.toString().padStart(2, '0')}:00
-                        </span>
-                        <Badge 
-                          variant={
-                            hour.sprayability === 'Buona' ? 'default' : 
-                            hour.sprayability === 'Discreta' ? 'secondary' : 
-                            'destructive'
-                          }
-                          className="text-xs"
-                        >
-                          {hour.sprayability}
-                        </Badge>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              {!loading && weather && (
+                <Card className="shadow-card-soft">
+                  <CardHeader>
+                    <CardTitle className="flex items-center text-lg">
+                      <AlertTriangle className="w-5 h-5 mr-2 text-primary" />
+                      Indice Sprayability (24h)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {next24.map((h, idx) => (
+                        <div key={h.ts + idx} className="flex items-center justify-between py-1">
+                          <span className="text-sm text-muted-foreground">{hhmm(h.ts)}</span>
+                          <Badge
+                            variant={
+                              h.label === 'Buona'
+                                ? 'default'
+                                : h.label === 'Discreta'
+                                ? 'secondary'
+                                : 'destructive'
+                            }
+                            className="text-xs"
+                          >
+                            {h.label}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Recommended Windows */}
-              <Card className="shadow-card-soft">
-                <CardHeader>
-                  <CardTitle className="text-lg">Finestre Consigliate</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="p-3 bg-green-50 rounded-lg border border-green-200">
-                      <div className="font-semibold text-green-800 text-sm">06:00 - 09:00</div>
-                      <div className="text-xs text-green-600">Condizioni ideali per il trattamento</div>
-                    </div>
-                    <div className="p-3 bg-green-50 rounded-lg border border-green-200">
-                      <div className="font-semibold text-green-800 text-sm">18:00 - 21:00</div>
-                      <div className="text-xs text-green-600">Vento calmo, temperatura ottimale</div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              {!loading && weather && (
+                <Card className="shadow-card-soft">
+                  <CardHeader>
+                    <CardTitle className="text-lg">Finestre Consigliate</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {sprayability.windows.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">Nessuna finestra nelle prossime 48h</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {sprayability.windows.slice(0, 3).map((w, i) => (
+                          <div key={i} className="p-3 bg-green-50 rounded-lg border border-green-200">
+                            <div className="font-semibold text-green-800 text-sm">
+                              {hhmm(w.start)} - {hhmm(w.end)}
+                            </div>
+                            <div className="text-xs text-green-600">Vento e pioggia entro soglia</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Export Actions */}
               <div className="flex space-x-2">

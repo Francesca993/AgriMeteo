@@ -16,27 +16,23 @@ const Navigation = () => {
         </Link>
         
         <div className="flex items-center space-x-4">
-          {location.pathname !== '/map' && (
-            <Button 
-              asChild 
-              className="bg-gradient-agricultural hover:opacity-90 text-primary-foreground shadow-agricultural"
-            >
-              <Link to="/map">
-                <MapPin className="w-4 h-4 mr-2" />
-                Apri Mappa
-              </Link>
-            </Button>
-          )}
-
-          {/* Added navigation links to the main pages requested */}
+          {/* Apri Mappa: always visible, highlight when active */}
           <NavLink
-            to="/selezione-aree"
+            to="/map"
             className={({ isActive }) =>
-              `px-3 py-2 rounded-md text-sm font-medium ${isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/10'}`
+              `px-3 py-2 rounded-md text-sm font-medium flex items-center ${
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-gradient-agricultural hover:opacity-90 text-primary-foreground shadow-agricultural'
+              }`
             }
           >
-            Selezione Aree
+            <MapPin className="w-4 h-4 mr-2" />
+            Apri Mappa
           </NavLink>
+
+          {/* Added navigation links to the main pages requested */}
+          {/* 'Selezione Aree' removed */}
 
           <NavLink
             to="/dati-meteo"

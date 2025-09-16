@@ -117,7 +117,7 @@ const Index = () => {
                   direttamente sulla mappa interattiva
                 </p>
                 <Button asChild variant="outline" size="sm">
-                  <Link to="/selezione-aree">
+                  <Link to="/map">
                     Scopri di più
                   </Link>
                 </Button>
