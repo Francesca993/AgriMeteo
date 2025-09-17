@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useMap } from 'react-leaflet';
 import { MapContainer, TileLayer, Marker, useMapEvents, Circle } from 'react-leaflet';
 import L from 'leaflet';
 // Vite-friendly imports for leaflet marker images
@@ -8,6 +10,7 @@ import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png?url';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Cloud,
   Wind,
@@ -18,6 +21,9 @@ import {
   Share2,
   AlertTriangle,
 } from 'lucide-react';
+import { Search } from 'lucide-react';
+import { Globe } from 'lucide-react';
+import { Flag } from 'lucide-react';
 
 // ---------- Leaflet icon fix (Vite/Next bundlers) ----------
 try {
@@ -167,6 +173,9 @@ async function fetchOpenMeteo(lat: number, lon: number): Promise<WeatherNorm> {
 
 // ---------- Component ----------
 const Map = () => {
+  const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const [selectedArea, setSelectedArea] = useState<{ lat: number; lng: number } | null>(null);
   const [weather, setWeather] = useState<WeatherNorm | null>(null);
   const [loading, setLoading] = useState(false);
@@ -206,6 +215,32 @@ const Map = () => {
   // slice 24h
   const next24 = sprayability.labels.slice(0, 24);
 
+  // Component to read query params and center map
+  function QueryMapCenter({ onCenter }: { onCenter: (latlng: { lat: number; lng: number }) => void }) {
+    const location = useLocation();
+    const map = useMap();
+
+    useEffect(() => {
+      const params = new URLSearchParams(location.search);
+      const latS = params.get('lat');
+      const lngS = params.get('lng');
+      if (!latS || !lngS) return;
+      const lat = parseFloat(latS);
+      const lng = parseFloat(lngS);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        // set selected area and pan the map
+        onCenter({ lat, lng });
+        try {
+          map.setView([lat, lng], 13);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }, [location.search, map, onCenter]);
+
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
       {/* Header portato da AreaSelection: badge, titolo e descrizione */}
@@ -222,10 +257,61 @@ const Map = () => {
         </div>
       </div>
 
+      {/* Search bar sotto header */}
+      <div className="container mx-auto px-4 max-w-4xl mb-4">
+        <div className="max-w-2xl mx-auto">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!query.trim()) return;
+              try {
+                const q = encodeURIComponent(query.trim());
+                const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`;
+                const res = await fetch(url, { headers: { 'Accept-Language': 'it' } });
+                const list = await res.json();
+                if (!list || list.length === 0) {
+                  alert('Nessun risultato trovato');
+                  return;
+                }
+                const place = list[0];
+                const lat = parseFloat(place.lat);
+                const lon = parseFloat(place.lon);
+                const display = place.display_name || '';
+                // set selected area and update query params so QueryMapCenter recenters as well
+                setSelectedArea({ lat, lng: lon });
+                if (display) {
+                  setSelectedName(display);
+                  try { localStorage.setItem('agri:selectedPlaceName', display); } catch {}
+                }
+                try { localStorage.setItem('agri:selectedPlaceCoords', `${lat.toFixed(5)}, ${lon.toFixed(5)}`); } catch {}
+                navigate(`/map?lat=${lat.toFixed(5)}&lng=${lon.toFixed(5)}`);
+              } catch (err) {
+                console.error(err);
+                alert('Errore nel geocoding');
+              }
+            }}
+          >
+            <div className="relative">
+              <span className="absolute inset-y-0 left-4 flex items-center text-agricultural-green">
+                <Search className="w-6 h-6 text-agricultural-green" />
+              </span>
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Cerca località, indirizzo o coordinate (es. Bologna 44.5, 11.3)"
+                className="pl-16 h-14 rounded-full shadow-md text-lg"
+                style={{ borderWidth: '2px', borderColor: 'hsl(var(--agricultural-green))' }}
+              />
+            </div>
+          </form>
+        </div>
+      </div>
+
       <div className="flex h-[calc(100vh-4rem)]">
         {/* Map Area */}
         <div className="flex-1 relative">
           <MapContainer {...({ center: [center.lat, center.lng], zoom: 6, className: 'w-full h-full' } as any)}>
+            <QueryMapCenter onCenter={(latlng) => setSelectedArea(latlng)} />
             <TileLayer
               {...({
                 attribution:
@@ -233,7 +319,23 @@ const Map = () => {
                 url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
               } as any)}
             />
-            <ClickHandler onSelect={(latlng) => setSelectedArea(latlng)} />
+            <ClickHandler onSelect={(latlng) => {
+              // set selected area and reverse-geocode to get a friendly name
+              setSelectedArea(latlng);
+              (async () => {
+                try {
+                  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}&zoom=10&addressdetails=1`;
+                  const res = await fetch(url, { headers: { 'Accept-Language': 'it' } });
+                  const j = await res.json();
+                  const name = j?.display_name || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+                  setSelectedName(name);
+                  try { localStorage.setItem('agri:selectedPlaceName', name); } catch {}
+                  try { localStorage.setItem('agri:selectedPlaceCoords', `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`); } catch {}
+                } catch (e) {
+                  // ignore reverse geocode errors
+                }
+              })();
+            }} />
 
             {selectedArea && (
               <>
@@ -291,6 +393,34 @@ const Map = () => {
               )}
 
               {/* Current Weather */}
+              {/* Selected place summary */}
+              {(selectedArea || selectedName) && (
+                <Card className="shadow-card-soft">
+                  <CardHeader>
+                    <CardTitle className="flex items-center text-lg">
+                      <MapPin className="w-5 h-5 mr-2 text-primary" />
+                      Luogo
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-sm">
+                      {selectedName && (
+                        <div className="flex items-center font-semibold text-foreground">
+                          <Flag className="w-4 h-4 mr-2 text-agricultural-green" />
+                          <span>{selectedName}{selectedArea ? ',' : ''}</span>
+                        </div>
+                      )}
+                      {selectedArea && (
+                        <div className="flex items-center text-muted-foreground mt-1">
+                          <Globe className="w-4 h-4 mr-2 text-agricultural-green" />
+                          <span>{selectedArea.lat.toFixed(5)}, {selectedArea.lng.toFixed(5)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {!loading && weather && (
                 <Card className="shadow-card-soft">
                   <CardHeader>

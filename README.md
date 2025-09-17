@@ -233,7 +233,7 @@ Header minimale: **Mappa** · **About** · **Dark/Light**. Footer con attributio
 
 ## 13) Schema dati (minimo)
 
-* **AreaSelection**: `id, geojson, centroid {lat, lon}, radius_m (se cerchio), created_at`.
+* **AreaSelection**: (removed) previously: `id, geojson, centroid {lat, lon}, radius_m (se cerchio), created_at`.
 * **WeatherSnapshot**: `id, area_id, provider, fetched_at, hourly[{ts, temp_c, rh, wind_ms, rain_mm, gust_ms?}]`.
 * **ComputationResult**: `id, area_id, sprayability[{ts, label}], windows[{start,end,label}], peronospora_v0{level, factors[]?}`.
 * **Share**: `slug, area_id, snapshot_id, expires_at?`.
