@@ -298,6 +298,9 @@ const WeatherData = () => {
   // previsioni 12h e 48h
   const next12 = hourly ? hourly.slice(0, 12) : [];
   const next48 = hourly ?? [];
+  const selectedLocationLabel = [selectedPlaceName, selectedPlaceCoords]
+    .filter(Boolean)
+    .join(' • ');
 
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
@@ -316,25 +319,32 @@ const WeatherData = () => {
           </p>
 
           {(selectedPlaceCoords || selectedPlaceName) && (
-            <div className="mt-4 flex flex-col items-center">
-              <div className="flex items-center space-x-3">
-                <MapPin className="w-5 h-5 text-agricultural-green" />
-                <div className="text-center text-2xl font-semibold text-foreground">
-                  {'Coordinate selezionate: '}
-                  {selectedPlaceName ? `${selectedPlaceName}${selectedPlaceCoords ? ', ' : ''}` : ''}
-                  {selectedPlaceCoords || ''}
-                </div>
-              </div>
-              {loading && (
-                <div className="mt-2 text-sm text-muted-foreground">
-                  Carico i dati meteo…
-                </div>
-              )}
-              {err && (
-                <div className="mt-2 text-sm text-destructive">
-                  ⚠️ {err}
-                </div>
-              )}
+            <div className="mt-6">
+              <Card className="shadow-card-soft w-full">
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3 p-2 flex-nowrap overflow-x-auto">
+                    <MapPin className="w-6 h-6 text-black shrink-0" />
+                    <span className="text-xl font-semibold text-black whitespace-nowrap">
+                      Coordinate selezionate:
+                    </span>
+                    {selectedLocationLabel && (
+                      <span className="text-xl font-semibold text-black whitespace-nowrap">
+                        {selectedLocationLabel}
+                      </span>
+                    )}
+                  </div>
+                  {loading && (
+                    <div className="mt-3 text-xs text-muted-foreground">
+                      Carico i dati meteo…
+                    </div>
+                  )}
+                  {err && (
+                    <div className="mt-3 text-xs text-destructive">
+                      ⚠️ {err}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>
@@ -344,7 +354,7 @@ const WeatherData = () => {
           <CardHeader>
             <CardTitle className="flex items-center text-2xl">
               <Cloud className="w-6 h-6 mr-3 text-primary" />
-              Condizioni Attuali{selectedPlaceName ? ` — ${selectedPlaceName}` : ''}
+              Condizioni Attuali
             </CardTitle>
           </CardHeader>
           <CardContent>

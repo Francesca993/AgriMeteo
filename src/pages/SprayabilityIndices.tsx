@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,8 @@ import {
   Calculator,
   Target,
   Activity,
+  Bot,
+  Loader2,
 } from 'lucide-react';
 import {
   WEIGHTS,
@@ -61,6 +63,14 @@ const INITIAL_THRESHOLDS = mergeThresholds(
   WIND_SENSITIVITY_PRESETS.balanced.overrides,
 );
 
+type AgronomistAdvice = {
+  headline: string;
+  summary: string;
+  productSuggestion: string | null;
+  recommendedActions: string[];
+  cautions: string[];
+};
+
 const SprayabilityIndices = () => {
   const [placeName, setPlaceName] = useState<string | null>(null);
   const [coords, setCoords] = useState<{lat: number; lon: number} | null>(null);
@@ -88,6 +98,9 @@ const SprayabilityIndices = () => {
   ]);
 
   const [timeWindows, setTimeWindows] = useState<Array<{ time: string; status: Category; confidence: number; reason: string }>>([]);
+  const [aiAdvice, setAiAdvice] = useState<AgronomistAdvice | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -269,6 +282,221 @@ const SprayabilityIndices = () => {
   const cropPreset = CROP_PRESETS[selectedCrop];
   const productPreset = PRODUCT_PRESETS[selectedProduct];
   const windPreset = WIND_SENSITIVITY_PRESETS[windSensitivity];
+
+  const factorSummaries = useMemo(
+    () =>
+      sprayabilityFactors.map((factor) => {
+        const baseValue =
+          typeof factor.current === 'number'
+            ? factor.current.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+            : String(factor.current);
+        const value = baseValue === '—' ? baseValue : `${baseValue}${factor.unit}`;
+        return {
+          name: factor.name,
+          status: factor.status,
+          value,
+          threshold: factor.threshold,
+          weight: factor.weight,
+        };
+      }),
+    [sprayabilityFactors],
+  );
+
+  const fallbackAdvice = useMemo<AgronomistAdvice>(() => {
+    const hasData = currentStatus != null;
+    const normalizedScore = currentScore != null ? ` (indice ${currentScore}%)` : '';
+    const statusLabel = hasData ? currentStatus?.toLowerCase() : null;
+    const summary = hasData && statusLabel
+      ? `Per ${cropPreset.label.toLowerCase()} con intervento ${productPreset.label.toLowerCase()}, le condizioni attuali risultano ${statusLabel}${normalizedScore}. Sensibilità vento: ${windPreset.label.toLowerCase()}.`
+      : 'Seleziona un’area e aggiorna i dati meteo per ottenere un parere agronomico personalizzato.';
+
+    const productSuggestion = `Prodotto suggerito: ${productPreset.label} — ${productPreset.description}`;
+
+    const recommendations: string[] = [];
+    const cautions: string[] = [];
+
+    const bestWindow = timeWindows[0];
+    const minWindowSuggested = Math.max(
+      minWindowHours,
+      productPreset.suggestedMinWindow ?? minWindowHours,
+    );
+
+    if (bestWindow) {
+      recommendations.push(
+        `Programmare il trattamento tra ${bestWindow.time} (${bestWindow.status}, conf. ${bestWindow.confidence}%) garantendo continuità ≥ ${minWindowSuggested}h.`,
+      );
+      if (bestWindow.reason) {
+        recommendations.push(`Motivo finestra: ${bestWindow.reason}.`);
+      }
+    } else {
+      cautions.push(
+        'Nessuna finestra operativa continua rilevata: valuta di allentare le soglie o posticipare il trattamento.',
+      );
+    }
+
+    factorSummaries.forEach((factor) => {
+      if (factor.status === 'good') return;
+      const targetList = factor.status === 'bad' ? cautions : recommendations;
+      if (factor.name.includes('Vento')) {
+        targetList.push(
+          `${factor.status === 'bad' ? 'Vento sopra soglia' : 'Vento vicino al limite'} (${factor.value}). Mantieni barra bassa, usa ugelli antideriva e resta sotto ${thresholds.windGood.toFixed(1)} m/s (raffiche ≤ ${thresholds.gustGood.toFixed(1)} m/s).`,
+        );
+      } else if (factor.name.includes('Pioggia')) {
+        targetList.push(
+          `${factor.status === 'bad' ? 'Pioggia prevista eccessiva' : 'Pioggia moderata prevista'}: impiega adesivanti rapidi e verifica il dilavamento entro 6h (soglia ≤ ${thresholds.rainGood.toFixed(1)} mm).`,
+        );
+      } else if (factor.name.includes('Temperatura')) {
+        targetList.push(
+          `Temperature ai limiti (${factor.value}). Regola volume e velocità in funzione del range ${thresholds.tempGoodMin.toFixed(0)}-${thresholds.tempGoodMax.toFixed(0)}°C.`,
+        );
+      } else if (factor.name.includes('Umidità')) {
+        targetList.push(
+          `Umidità ${factor.status === 'bad' ? 'fuori range' : 'borderline'} (${factor.value}). Adegua dimensione goccia e valuta bagnanti per restare tra ${thresholds.rhGoodMin.toFixed(0)}-${thresholds.rhGoodMax.toFixed(0)}%.`,
+        );
+      }
+    });
+
+    if (recommendations.length === 0) {
+      recommendations.push('Mantieni monitoraggio in campo e aggiorna i dati prima dell’intervento.');
+    }
+
+    return {
+      headline: 'Parere agronomico AI',
+      summary,
+      productSuggestion,
+      recommendedActions: recommendations,
+      cautions,
+    };
+  }, [
+    cropPreset.label,
+    currentScore,
+    currentStatus,
+    factorSummaries,
+    minWindowHours,
+    productPreset.description,
+    productPreset.label,
+    productPreset.suggestedMinWindow,
+    thresholds.gustGood,
+    thresholds.rainGood,
+    thresholds.rhGoodMax,
+    thresholds.rhGoodMin,
+    thresholds.tempGoodMax,
+    thresholds.tempGoodMin,
+    thresholds.windGood,
+    timeWindows,
+    windPreset.label,
+  ]);
+
+  const aiPayload = useMemo(() => {
+    if (!coords || !hourly || hourly.length === 0 || !currentStatus) return null;
+    const hourlySnapshot = hourly.map((item) => ({
+      ts: item.ts,
+      temp_c: item.temp_c,
+      rh_pct: item.rh_pct,
+      wind_ms: item.wind_ms,
+      gust_ms: item.gust_ms ?? null,
+      rain_mm: item.rain_mm,
+      rain6h_mm: item.rain6h_mm ?? null,
+    }));
+
+    return {
+      timestamp: new Date().toISOString(),
+      location: coords ? { ...coords, name: placeName } : null,
+      crop: { key: selectedCrop, label: cropPreset.label },
+      product: { key: selectedProduct, label: productPreset.label },
+      windSensitivity: { key: windSensitivity, label: windPreset.label },
+      thresholds,
+      minWindowHours,
+      current: { status: currentStatus, score: currentScore },
+      factors: factorSummaries,
+      windows: timeWindows,
+      hourly: hourlySnapshot,
+    };
+  }, [
+    coords,
+    cropPreset.label,
+    currentScore,
+    currentStatus,
+    factorSummaries,
+    hourly,
+    placeName,
+    productPreset.label,
+    selectedCrop,
+    selectedProduct,
+    thresholds,
+    timeWindows,
+    minWindowHours,
+    windPreset.label,
+    windSensitivity,
+  ]);
+
+  const aiPayloadString = useMemo(() => (aiPayload ? JSON.stringify(aiPayload) : null), [aiPayload]);
+
+  const adviceToRender = aiAdvice ?? fallbackAdvice;
+  const aiEndpoint = import.meta.env.VITE_AI_API_URL ?? '';
+
+  useEffect(() => {
+    if (!aiPayloadString || !aiEndpoint) {
+      setAiAdvice(fallbackAdvice);
+      setAiLoading(false);
+      setAiError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const toStringArray = (value: unknown): string[] | null => {
+      if (!Array.isArray(value)) return null;
+      const cleaned = value
+        .map((item) => (typeof item === 'string' ? item.trim() : null))
+        .filter((item): item is string => Boolean(item));
+      return cleaned.length > 0 ? cleaned : null;
+    };
+
+    const run = async () => {
+      setAiLoading(true);
+      setAiError(null);
+      setAiAdvice(fallbackAdvice);
+      try {
+        const res = await fetch(aiEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: aiPayloadString,
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error('Servizio AI non disponibile');
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        const normalized: AgronomistAdvice = {
+          headline: typeof data?.headline === 'string' ? data.headline : fallbackAdvice.headline,
+          summary: typeof data?.summary === 'string' ? data.summary : fallbackAdvice.summary,
+          productSuggestion:
+            typeof data?.productSuggestion === 'string'
+              ? data.productSuggestion
+              : typeof data?.product === 'string'
+                ? data.product
+                : fallbackAdvice.productSuggestion,
+          recommendedActions:
+            toStringArray(data?.recommendedActions) ??
+            toStringArray(data?.recommendations) ??
+            fallbackAdvice.recommendedActions,
+          cautions: toStringArray(data?.cautions) ?? fallbackAdvice.cautions,
+        };
+        setAiAdvice(normalized);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setAiError((error as Error)?.message ?? 'Impossibile ottenere il parere AI.');
+        setAiAdvice(fallbackAdvice);
+      } finally {
+        if (!controller.signal.aborted) {
+          setAiLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => controller.abort();
+  }, [aiEndpoint, aiPayloadString, fallbackAdvice]);
 
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
@@ -489,8 +717,53 @@ const SprayabilityIndices = () => {
           </CardContent>
         </Card>
 
-  {/* Advanced Features (placeholder/roadmap) */}
-  <div className="grid grid-cols-1 gap-6 mb-12">
+        {/* AI Agronomist Advice */}
+        <Card className="shadow-card-soft mb-12 border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center text-primary">
+              <Bot className="w-5 h-5 mr-2" />
+              {adviceToRender.headline}
+              {aiLoading && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="text-muted-foreground">{adviceToRender.summary}</p>
+
+            {adviceToRender.productSuggestion && (
+              <div className="p-3 rounded-lg border border-primary/20 bg-white/60">
+                <div className="text-xs font-semibold uppercase text-primary">Prodotto consigliato</div>
+                <div className="text-sm text-foreground mt-1">{adviceToRender.productSuggestion}</div>
+              </div>
+            )}
+
+            {adviceToRender.recommendedActions?.length ? (
+              <div>
+                <div className="font-semibold text-foreground mb-1">Azioni consigliate</div>
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                  {adviceToRender.recommendedActions.map((item, idx) => (
+                    <li key={`ai-rec-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {adviceToRender.cautions?.length ? (
+              <div>
+                <div className="font-semibold text-foreground mb-1">Punti di attenzione</div>
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                  {adviceToRender.cautions.map((item, idx) => (
+                    <li key={`ai-caution-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {aiError && <div className="text-xs text-destructive">⚠️ {aiError}</div>}
+          </CardContent>
+        </Card>
+
+        {/* Advanced Features (placeholder/roadmap) */}
+        <div className="grid grid-cols-1 gap-6 mb-12">
           <Card className="shadow-card-soft">
             <CardHeader>
               <CardTitle className="text-lg">Personalizzazione</CardTitle>

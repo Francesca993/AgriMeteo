@@ -14,10 +14,12 @@ import {
   Thermometer,
   Eye,
   Gauge,
+  Cloud,
   ArrowRight,
   BarChart3,
   LineChart,
   Calendar,
+  Bot,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -209,6 +211,42 @@ const fallbackAlerts: AlertItem[] = [
   },
 ];
 
+type PredictiveInsight = {
+  score: number | null;
+  label: string;
+  note: string;
+  recommendation: string;
+  extra?: string;
+};
+
+type PredictiveSummary = {
+  dispersion: PredictiveInsight;
+  evaporation: PredictiveInsight & { estimateMinutes: number | null };
+  deposition: PredictiveInsight;
+};
+
+const fallbackPredictive: PredictiveSummary = {
+  dispersion: {
+    score: null,
+    label: 'n/d',
+    note: 'Seleziona una località per stimare la dispersione.',
+    recommendation: 'Definisci l’area operativa per ottenere indicazioni mirate.',
+  },
+  evaporation: {
+    score: null,
+    label: 'n/d',
+    note: 'Dati microclimatici insufficienti per valutare l’evaporazione.',
+    recommendation: 'Verifica temperatura e umidità dell’area selezionata.',
+    estimateMinutes: null,
+  },
+  deposition: {
+    score: null,
+    label: 'n/d',
+    note: 'Impossibile stimare l’efficienza di deposizione senza dati locali.',
+    recommendation: 'Seleziona un punto sulla mappa per valutare la stabilità atmosferica.',
+  },
+};
+
 const ConditionsAnalysis = () => {
   const [placeName, setPlaceName] = useState<string | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -216,6 +254,7 @@ const ConditionsAnalysis = () => {
   const [hourly, setHourly] = useState<HourPoint[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [lastFetchTs, setLastFetchTs] = useState<number | null>(null);
 
   const [selectedCrop, setSelectedCrop] = useState<CropPresetKey>('standard');
   const [selectedProduct, setSelectedProduct] = useState<ProductPresetKey>('fungicida');
@@ -223,6 +262,10 @@ const ConditionsAnalysis = () => {
   const [thresholds, setThresholds] = useState<Thresholds>(INITIAL_THRESHOLDS);
   const [minWindowHours, setMinWindowHours] = useState<number>(2);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
+
+  const cropPreset = CROP_PRESETS[selectedCrop];
+  const productPreset = PRODUCT_PRESETS[selectedProduct];
+  const windPreset = WIND_SENSITIVITY_PRESETS[windSensitivity];
 
   useEffect(() => {
     try {
@@ -284,7 +327,10 @@ const ConditionsAnalysis = () => {
     setLoading(true);
     setErr(null);
     fetchHourly(coords.lat, coords.lon)
-      .then((data) => setHourly(data))
+      .then((data) => {
+        setHourly(data);
+        setLastFetchTs(Date.now());
+      })
       .catch((e) => setErr(e?.message || 'Errore dati meteo'))
       .finally(() => setLoading(false));
   }, [coords]);
@@ -494,6 +540,67 @@ const ConditionsAnalysis = () => {
       },
     ];
 
+    const windNow = currentHour?.wind_ms ?? windScoreNow * 6;
+    const gustNow = currentHour?.gust_ms ?? windNow;
+    const tempNow = currentHour?.temp_c ?? 22;
+
+    const dispersionScore = clamp(Math.round(100 - riskValue));
+    const dispersionLabel = riskValue >= 60 ? 'Critico' : riskValue >= 35 ? 'Attenzione' : 'Controllato';
+    const dispersionNote = `Vento medio ${windNow.toFixed(1)} m/s • Raffiche ${gustNow.toFixed(1)} m/s`;
+    const dispersionRecommendation =
+      riskValue >= 60
+        ? 'Passa a ugelli antideriva e riduci altezza barra (≤50 cm).'
+        : riskValue >= 35
+          ? 'Mantieni velocità sotto 6 km/h e verifica barriere anti-deriva.'
+          : 'Configurazione corrente adeguata; continua a monitorare le raffiche.';
+
+    const humidityForEvap = humidityAvg ?? currentHour?.rh_pct ?? 60;
+    const evapMinutesRaw = 12 + (humidityForEvap - 60) / 3 - (tempNow - 22) / 2 - (windNow || 0) * 1.5;
+    const evaporationMinutes = clamp(Math.round(evapMinutesRaw), 3, 25);
+    const evaporationScore = clamp(Math.round((evaporationMinutes / 25) * 100));
+    const evaporationLabel = evaporationMinutes <= 6 ? 'Rapida' : evaporationMinutes <= 12 ? 'Bilanciata' : 'Lenta';
+    const evaporationNote = `Temperatura ${tempNow.toFixed(1)}°C • UR ${humidityForEvap.toFixed(0)}%`;
+    const evaporationRecommendation =
+      evaporationMinutes <= 6
+        ? 'Utilizza gocce medio-grosse o aggiungi condizionanti per rallentare l’evaporazione.'
+        : evaporationMinutes <= 12
+          ? 'Condizioni equilibrate: mantieni il volume abituale.'
+          : 'Riduci il volume irrorato per evitare gocciolamenti e colature.';
+
+    const stressPenalty = Math.min(60, Math.abs(stressValue - 45) * 1.2);
+    const depositionScore = clamp(Math.round(stabilityValue * 0.6 + (100 - stressPenalty) * 0.4));
+    const depositionLabel = depositionScore >= 75 ? 'Ottimale' : depositionScore >= 55 ? 'Buona' : 'Bassa';
+    const depositionNote = `Stabilità ${stabilityValue}% • Stress idrico ${stressValue}%`;
+    const depositionRecommendation =
+      depositionScore >= 75
+        ? 'Approfitta della stabilità per trattamenti mirati anche su bersagli difficili.'
+        : depositionScore >= 55
+          ? 'Mantieni ugelli a ventaglio stretto e monitora uniformità di bagnatura.'
+          : 'Aumenta volume e riduci velocità per migliorare la deposizione.';
+
+    const predictive: PredictiveSummary = {
+      dispersion: {
+        score: dispersionScore,
+        label: dispersionLabel,
+        note: dispersionNote,
+        recommendation: dispersionRecommendation,
+      },
+      evaporation: {
+        score: evaporationScore,
+        label: evaporationLabel,
+        note: evaporationNote,
+        recommendation: evaporationRecommendation,
+        estimateMinutes: evaporationMinutes,
+        extra: `Stimata permanenza gocce: ${evaporationMinutes} min`,
+      },
+      deposition: {
+        score: depositionScore,
+        label: depositionLabel,
+        note: depositionNote,
+        recommendation: depositionRecommendation,
+      },
+    };
+
     return {
       metrics,
       factors,
@@ -506,6 +613,10 @@ const ConditionsAnalysis = () => {
       windowValue,
       stressValue,
       gradientTemp,
+      nearSpread,
+      rainNext12,
+      humidityAvg,
+      predictive,
     };
   }, [hourly, thresholds, minWindowHours]);
 
@@ -517,12 +628,122 @@ const ConditionsAnalysis = () => {
   const currentEval = derived?.currentEval ?? null;
   const gradientTemp = derived?.gradientTemp ?? null;
 
-  const lastUpdate = currentHour ? fmtHHmm(currentHour.ts) : '—';
+  const lastUpdate = lastFetchTs
+    ? new Date(lastFetchTs).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    : '—';
   const currentWind = currentHour?.wind_ms != null ? `${currentHour.wind_ms.toFixed(1)} m/s` : '—';
   const currentGust = currentHour?.gust_ms != null ? `${currentHour.gust_ms.toFixed(1)} m/s` : '—';
   const currentCategory = currentEval?.category ?? 'n/d';
   const currentConfidence = currentEval ? `${currentEval.score}%` : '—';
   const bestWindow = windows[0] ?? null;
+  const gradientInterpretation = gradientTemp == null
+    ? null
+    : gradientTemp <= -2
+      ? 'Inversione marcata: elevato rischio deriva verticale'
+      : gradientTemp <= -1
+        ? 'Lieve inversione: monitorare nelle prossime ore'
+        : gradientTemp <= 1
+          ? 'Profilo quasi neutro'
+          : 'Convezione debole in sviluppo';
+  const turbulenceIndex = derived?.nearSpread ?? null;
+  const turbulenceStatusLabel = turbulenceIndex == null
+    ? null
+    : turbulenceIndex <= 1
+      ? 'Bassa turbolenza (quasi laminare)'
+      : turbulenceIndex <= 2
+        ? 'Moderata: controllare deriva laterale'
+        : 'Elevata: rischio disomogeneità';
+  const humidityAvg = derived?.humidityAvg ?? null;
+  const humidityStatusLabel = humidityAvg == null
+    ? null
+    : humidityAvg >= 55 && humidityAvg <= 85
+      ? 'Bilancio idrico favorevole'
+      : humidityAvg < 55
+        ? 'Tendenza a disseccamento fogliare'
+        : 'UR elevata: attenzione a colature';
+  const rainNext12 = derived?.rainNext12 ?? null;
+  const predictive = derived?.predictive ?? fallbackPredictive;
+
+  const aiAdvice = useMemo(() => {
+    if (!coords || !derived || !currentEval || !currentHour) {
+      return {
+        headline: 'Consiglio tecnico AI',
+        summary: 'Seleziona una zona dalla mappa e assicurati di aver impostato coltura e prodotto per generare una raccomandazione agronomica dedicata.',
+        recommendations: [] as string[],
+        cautions: [] as string[],
+      };
+    }
+
+    const recs: string[] = [];
+    const cautions: string[] = [];
+
+    const windowLabel = bestWindow
+      ? `${bestWindow.time} (conf. ${bestWindow.confidence}%)`
+      : null;
+    const minWindowSuggested = Math.max(
+      minWindowHours,
+      productPreset.suggestedMinWindow ?? minWindowHours,
+    );
+
+    if (windowLabel) {
+      recs.push(
+        `Programmare il trattamento tra ${windowLabel}, garantendo continuità operativa ≥ ${minWindowSuggested}h in linea con le soglie definite.`,
+      );
+    } else {
+      cautions.push(
+        'Nessuna finestra continua rilevata: considera l’adeguamento delle soglie o pianifica un intervento alternativo.',
+      );
+    }
+
+    if (derived.riskValue >= 60) {
+      cautions.push(
+        `Deriva stimata elevata: impiega ugelli antideriva, riduci pressione e mantieni il vento operativo < ${thresholds.windGood.toFixed(1)} m/s come da sensibilità "${windPreset.label}".`,
+      );
+    } else if (derived.riskValue >= 35) {
+      recs.push('Rischio deriva moderato: mantieni barra bassa, velocità < 6 km/h e monitora raffiche in tempo reale.');
+    } else {
+      recs.push('Vento sotto controllo: mantieni configurazione attuale del cantiere e verifica solo eventuali cambi repentini.');
+    }
+
+    if (derived.stressValue >= 65) {
+      cautions.push('Stress idrico elevato: preferire interventi serali o previa leggera irrigazione di soccorso.');
+    } else if (derived.stressValue <= 35) {
+      recs.push('Bilancio idrico favorevole: sfrutta l’ottima bagnatura fogliare per massimizzare l’assorbimento del formulato.');
+    }
+
+    if (derived.gradientTemp <= -1.5) {
+      cautions.push('Possibile inversione termica entro 3h: opera con ugelli a ventaglio stretto e monitoraggio deriva verticale.');
+    }
+
+    if (derived.rainNext12 > 0.4) {
+      cautions.push('Pioggia significativa prevista <12h: valuta adesivanti rapidi o rinvia per non compromettere la persistenza.');
+    }
+
+    if (derived.humidityAvg < 45) {
+      cautions.push('Umidità media bassa: calibra goccia più grossolana e aumenta volume per limitare evaporazione.');
+    }
+
+    const summary = `Per ${cropPreset.label.toLowerCase()} con intervento ${productPreset.label.toLowerCase()}, le condizioni attuali risultano ${currentEval.category.toLowerCase()} (indice ${currentEval.score}%).`;
+
+    return {
+      headline: 'Consiglio tecnico AI',
+      summary,
+      recommendations: recs,
+      cautions,
+    };
+  }, [
+    bestWindow,
+    coords,
+    cropPreset.label,
+    currentEval,
+    currentHour,
+    derived,
+    minWindowHours,
+    productPreset.label,
+    productPreset.suggestedMinWindow,
+    thresholds.windGood,
+    windPreset.label,
+  ]);
 
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
@@ -640,9 +861,9 @@ const ConditionsAnalysis = () => {
                   </div>
                 </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
+        </div>
+      </CardContent>
+    </Card>
 
         {/* Analysis Tools */}
         <div className="grid md:grid-cols-2 gap-8 mb-12">
@@ -653,44 +874,78 @@ const ConditionsAnalysis = () => {
                 Analisi Microclimatica
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 text-sm">
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <Thermometer className="w-4 h-4 text-red-500 mr-2" />
-                    <span className="text-sm">Gradiente Termico (3h)</span>
+                  <div>
+                    <div className="flex items-center">
+                      <Thermometer className="w-4 h-4 text-red-500 mr-2" />
+                      <span>Gradiente termico 0-3h</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {gradientInterpretation ?? 'Dato non disponibile'}
+                    </div>
                   </div>
-                  <span className="text-sm font-mono">
+                  <Badge variant="outline" className="font-mono">
                     {gradientTemp != null ? `${gradientTemp.toFixed(1)}°C` : 'n/d'}
-                  </span>
+                  </Badge>
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <Wind className="w-4 h-4 text-blue-500 mr-2" />
-                    <span className="text-sm">Profilo del Vento</span>
+                  <div>
+                    <div className="flex items-center">
+                      <Wind className="w-4 h-4 text-blue-500 mr-2" />
+                      <span>Shear vento (raffica - medio)</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {turbulenceStatusLabel ?? 'Dato non disponibile'}
+                    </div>
                   </div>
-                  <span className="text-sm font-mono">
-                    {currentHour?.wind_ms != null ? `${currentHour.wind_ms.toFixed(1)} m/s` : 'n/d'} • Raffiche {currentHour?.gust_ms != null ? currentHour.gust_ms.toFixed(1) : 'n/d'} m/s
-                  </span>
+                  <Badge variant="outline" className="font-mono">
+                    {turbulenceIndex != null
+                      ? `${turbulenceIndex.toFixed(2)} m/s`
+                      : 'n/d'}
+                  </Badge>
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <Droplets className="w-4 h-4 text-cyan-500 mr-2" />
-                    <span className="text-sm">Umidità Relativa</span>
+                  <div>
+                    <div className="flex items-center">
+                      <Droplets className="w-4 h-4 text-cyan-500 mr-2" />
+                      <span>UR media prossime 6h</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {humidityStatusLabel ?? 'Dato non disponibile'}
+                    </div>
                   </div>
-                  <span className="text-sm font-mono">
-                    {currentHour?.rh_pct != null ? `${currentHour.rh_pct.toFixed(0)}%` : 'n/d'}
-                  </span>
+                  <Badge variant="outline" className="font-mono">
+                    {humidityAvg != null ? `${humidityAvg.toFixed(0)}%` : 'n/d'}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center">
+                      <Cloud className="w-4 h-4 text-muted-foreground mr-2" />
+                      <span>Pioggia cumulata 12h</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {rainNext12 != null && rainNext12 > 0.4
+                        ? 'Valuta la tenuta del formulato (possibile dilavamento)'
+                        : 'Nessun evento significativo atteso'}
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="font-mono">
+                    {rainNext12 != null ? `${rainNext12.toFixed(1)} mm` : 'n/d'}
+                  </Badge>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
                     <Gauge className="w-4 h-4 text-purple-500 mr-2" />
-                    <span className="text-sm">Ultimo Aggiornamento</span>
+                    <span>Ultimo aggiornamento</span>
                   </div>
-                  <span className="text-sm font-mono">{lastUpdate}</span>
+                  <span className="text-xs text-muted-foreground">{lastUpdate}</span>
                 </div>
               </div>
             </CardContent>
@@ -703,35 +958,50 @@ const ConditionsAnalysis = () => {
                 Modelli Predittivi
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 text-sm">
               <div className="space-y-4">
                 <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-blue-800">Dispersione Aerosol</span>
-                    <Badge className="bg-blue-100 text-blue-800">Gaussiano</Badge>
+                    <span className="font-semibold text-blue-900">Dispersione aerosol</span>
+                    <Badge variant="outline" className="text-blue-800 border-blue-300">
+                      {predictive.dispersion.label}
+                    </Badge>
                   </div>
-                  <div className="text-xs text-blue-600">
-                    Utilizza vento istantaneo ({currentWind}) e raffiche ({currentGust}) per stimare la deriva a breve termine.
+                  <Progress value={predictive.dispersion.score ?? 0} className="h-2 mb-2" />
+                  <div className="text-xs text-blue-700">{predictive.dispersion.note}</div>
+                  <div className="text-xs text-blue-900 mt-1">
+                    Suggerimento: {predictive.dispersion.recommendation}
                   </div>
                 </div>
 
                 <div className="p-3 bg-green-50 rounded-lg border border-green-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-green-800">Evaporazione Gocce</span>
-                    <Badge className="bg-green-100 text-green-800">Termodinamico</Badge>
+                    <span className="font-semibold text-green-900">Evaporazione gocce</span>
+                    <Badge variant="outline" className="text-green-800 border-green-300">
+                      {predictive.evaporation.label}
+                    </Badge>
                   </div>
-                  <div className="text-xs text-green-600">
-                    Tiene conto di temperatura {currentHour?.temp_c != null ? `${currentHour.temp_c.toFixed(1)}°C` : 'n/d'} e UR {currentHour?.rh_pct != null ? `${currentHour.rh_pct.toFixed(0)}%` : 'n/d'}.
+                  <Progress value={predictive.evaporation.score ?? 0} className="h-2 mb-2" />
+                  <div className="text-xs text-green-700">{predictive.evaporation.note}</div>
+                  <div className="text-xs text-green-800 mt-1">
+                    {predictive.evaporation.extra ?? ''}
+                  </div>
+                  <div className="text-xs text-green-900 mt-1">
+                    Suggerimento: {predictive.evaporation.recommendation}
                   </div>
                 </div>
 
                 <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-purple-800">Deposizione</span>
-                    <Badge className="bg-purple-100 text-purple-800">Gravitazionale</Badge>
+                    <span className="font-semibold text-purple-900">Deposizione su target</span>
+                    <Badge variant="outline" className="text-purple-800 border-purple-300">
+                      {predictive.deposition.label}
+                    </Badge>
                   </div>
-                  <div className="text-xs text-purple-600">
-                    Combina indici di stabilità ({derived?.stabilityValue ?? '—'}%) e stress idrico ({derived?.stressValue ?? '—'}%) per stimare l'efficienza di assorbimento.
+                  <Progress value={predictive.deposition.score ?? 0} className="h-2 mb-2" />
+                  <div className="text-xs text-purple-700">{predictive.deposition.note}</div>
+                  <div className="text-xs text-purple-900 mt-1">
+                    Suggerimento: {predictive.deposition.recommendation}
                   </div>
                 </div>
               </div>
@@ -771,6 +1041,41 @@ const ConditionsAnalysis = () => {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* AI Agronomist Advice */}
+        <Card className="shadow-card-soft mb-12 border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center text-primary">
+              <Bot className="w-5 h-5 mr-2" />
+              {aiAdvice.headline}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <p className="text-muted-foreground">{aiAdvice.summary}</p>
+
+            {aiAdvice.recommendations.length > 0 && (
+              <div>
+                <div className="font-semibold text-foreground mb-1">Azioni consigliate</div>
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                  {aiAdvice.recommendations.map((item, idx) => (
+                    <li key={`rec-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {aiAdvice.cautions.length > 0 && (
+              <div>
+                <div className="font-semibold text-foreground mb-1">Punti di attenzione</div>
+                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                  {aiAdvice.cautions.map((item, idx) => (
+                    <li key={`caution-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
 

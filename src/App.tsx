@@ -25,11 +25,9 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/map" element={<Map />} />
           <Route path="/about" element={<About />} />
-          {/* Route '/selezione-aree' removed (AreaSelection page deleted) */}
           <Route path="/dati-meteo" element={<WeatherData />} />
           <Route path="/indici-sprayability" element={<SprayabilityIndices />} />
           <Route path="/analisi-condizioni" element={<ConditionsAnalysis />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
