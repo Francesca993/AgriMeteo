@@ -19,7 +19,6 @@ import {
   BarChart3,
   LineChart,
   Calendar,
-  Bot,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -664,87 +663,6 @@ const ConditionsAnalysis = () => {
   const rainNext12 = derived?.rainNext12 ?? null;
   const predictive = derived?.predictive ?? fallbackPredictive;
 
-  const aiAdvice = useMemo(() => {
-    if (!coords || !derived || !currentEval || !currentHour) {
-      return {
-        headline: 'Consiglio tecnico AI',
-        summary: 'Seleziona una zona dalla mappa e assicurati di aver impostato coltura e prodotto per generare una raccomandazione agronomica dedicata.',
-        recommendations: [] as string[],
-        cautions: [] as string[],
-      };
-    }
-
-    const recs: string[] = [];
-    const cautions: string[] = [];
-
-    const windowLabel = bestWindow
-      ? `${bestWindow.time} (conf. ${bestWindow.confidence}%)`
-      : null;
-    const minWindowSuggested = Math.max(
-      minWindowHours,
-      productPreset.suggestedMinWindow ?? minWindowHours,
-    );
-
-    if (windowLabel) {
-      recs.push(
-        `Programmare il trattamento tra ${windowLabel}, garantendo continuità operativa ≥ ${minWindowSuggested}h in linea con le soglie definite.`,
-      );
-    } else {
-      cautions.push(
-        'Nessuna finestra continua rilevata: considera l’adeguamento delle soglie o pianifica un intervento alternativo.',
-      );
-    }
-
-    if (derived.riskValue >= 60) {
-      cautions.push(
-        `Deriva stimata elevata: impiega ugelli antideriva, riduci pressione e mantieni il vento operativo < ${thresholds.windGood.toFixed(1)} m/s come da sensibilità "${windPreset.label}".`,
-      );
-    } else if (derived.riskValue >= 35) {
-      recs.push('Rischio deriva moderato: mantieni barra bassa, velocità < 6 km/h e monitora raffiche in tempo reale.');
-    } else {
-      recs.push('Vento sotto controllo: mantieni configurazione attuale del cantiere e verifica solo eventuali cambi repentini.');
-    }
-
-    if (derived.stressValue >= 65) {
-      cautions.push('Stress idrico elevato: preferire interventi serali o previa leggera irrigazione di soccorso.');
-    } else if (derived.stressValue <= 35) {
-      recs.push('Bilancio idrico favorevole: sfrutta l’ottima bagnatura fogliare per massimizzare l’assorbimento del formulato.');
-    }
-
-    if (derived.gradientTemp <= -1.5) {
-      cautions.push('Possibile inversione termica entro 3h: opera con ugelli a ventaglio stretto e monitoraggio deriva verticale.');
-    }
-
-    if (derived.rainNext12 > 0.4) {
-      cautions.push('Pioggia significativa prevista <12h: valuta adesivanti rapidi o rinvia per non compromettere la persistenza.');
-    }
-
-    if (derived.humidityAvg < 45) {
-      cautions.push('Umidità media bassa: calibra goccia più grossolana e aumenta volume per limitare evaporazione.');
-    }
-
-    const summary = `Per ${cropPreset.label.toLowerCase()} con intervento ${productPreset.label.toLowerCase()}, le condizioni attuali risultano ${currentEval.category.toLowerCase()} (indice ${currentEval.score}%).`;
-
-    return {
-      headline: 'Consiglio tecnico AI',
-      summary,
-      recommendations: recs,
-      cautions,
-    };
-  }, [
-    bestWindow,
-    coords,
-    cropPreset.label,
-    currentEval,
-    currentHour,
-    derived,
-    minWindowHours,
-    productPreset.label,
-    productPreset.suggestedMinWindow,
-    thresholds.windGood,
-    windPreset.label,
-  ]);
-
   return (
     <div className="min-h-screen bg-gradient-earth pt-16">
       <div className="container mx-auto px-4 py-12 max-w-6xl">
@@ -1041,41 +959,6 @@ const ConditionsAnalysis = () => {
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* AI Agronomist Advice */}
-        <Card className="shadow-card-soft mb-12 border-primary/20 bg-primary/5">
-          <CardHeader>
-            <CardTitle className="flex items-center text-primary">
-              <Bot className="w-5 h-5 mr-2" />
-              {aiAdvice.headline}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <p className="text-muted-foreground">{aiAdvice.summary}</p>
-
-            {aiAdvice.recommendations.length > 0 && (
-              <div>
-                <div className="font-semibold text-foreground mb-1">Azioni consigliate</div>
-                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                  {aiAdvice.recommendations.map((item, idx) => (
-                    <li key={`rec-${idx}`}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {aiAdvice.cautions.length > 0 && (
-              <div>
-                <div className="font-semibold text-foreground mb-1">Punti di attenzione</div>
-                <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                  {aiAdvice.cautions.map((item, idx) => (
-                    <li key={`caution-${idx}`}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </CardContent>
         </Card>
 

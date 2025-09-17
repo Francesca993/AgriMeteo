@@ -275,3 +275,8 @@ Avvia il server mock: npm run mock:ai.
 In un’altra shell esegui npm run dev e apri la pagina: il blocco “Parere agronomico AI” mostrerà la risposta mock senza più l’errore “Servizio AI non disponibile”.
 Quando avrai un endpoint reale, aggiorna VITE_AI_API_URL di conseguenza; il frontend continuerà a funzionare con la stessa logica.
 */
+
+Come usarlo
+Avvia il server mock: npm run mock:ai.
+In un’altra shell esegui npm run dev e apri la pagina: il blocco “Parere agronomico AI” mostrerà la risposta mock senza più l’errore “Servizio AI non disponibile”.
+Quando avrai un endpoint reale, aggiorna VITE_AI_API_URL di conseguenza; il frontend continuerà a funzionare con la stessa logica.
