@@ -74,6 +74,9 @@ type ReverseGeocodeResult = {
 };
 
 const center = { lat: 44.4968, lng: 11.3548 }; // default center (Italy)
+const TILE_ATTRIBUTION =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
 function hhmm(ts: string) {
   try {
@@ -349,10 +352,7 @@ const Map = () => {
         <div className="flex-1 relative">
           <MapContainer center={mapDefaultCenter} zoom={6} className="w-full h-full">
             <QueryMapCenter onCenter={(latlng) => setSelectedArea(latlng)} />
-            <TileLayer
-              attribution="&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors"
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+            <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
             <ClickHandler onSelect={(latlng) => {
               // set selected area and reverse-geocode to get a friendly name
               setSelectedArea(latlng);
