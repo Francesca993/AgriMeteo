@@ -31,6 +31,8 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts';
+import type { TooltipProps } from 'recharts';
+import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 /* -------------------- UTIL -------------------- */
 function degToCompass(deg?: number): string | null {
@@ -99,6 +101,14 @@ type HourlyPoint = {
   rain_mm: number | null;
 };
 
+type RotatedTickProps = {
+  x?: number;
+  y?: number;
+  payload?: {
+    value?: string | number;
+  };
+};
+
 /* -------------------- API -------------------- */
 // Dati attuali base
 async function fetchOpenMeteoCurrent(lat: number, lon: number): Promise<ApiCurrent> {
@@ -145,7 +155,9 @@ async function fetchOpenMeteoExtras(lat: number, lon: number): Promise<ApiExtras
   const H = j?.hourly || {};
   const times: string[] = H.time || [];
   // trova l'ora più vicina adesso
-  let idx = 0, best = Number.POSITIVE_INFINITY, now = Date.now();
+  let idx = 0;
+  let best = Number.POSITIVE_INFINITY;
+  const now = Date.now();
   for (let i = 0; i < times.length; i++) {
     const d = Math.abs(new Date(times[i]).getTime() - now);
     if (d < best) { best = d; idx = i; }
@@ -193,29 +205,30 @@ async function fetchOpenMeteoHourly(lat: number, lon: number): Promise<HourlyPoi
 }
 
 /* -------------------- Tooltip personalizzato -------------------- */
-function CustomTooltip({ active, payload, label }: any) {
-  if (!active || !payload || !payload.length) return null;
+function CustomTooltip({ active, payload, label }: TooltipProps<ValueType, NameType>) {
+  if (!active || !payload || payload.length === 0) return null;
+  const labelValue = typeof label === 'string' ? label : String(label ?? '');
   // label è ts (ISO) perché XAxis usa dataKey="ts"
-  const when = labelOggiDomani(label);
+  const when = labelOggiDomani(labelValue);
   // trova valori dai dataKey
-  const d: any = payload[0]?.payload || {};
+  const datum = (payload[0]?.payload ?? {}) as Partial<HourlyPoint>;
   return (
     <div className="rounded-md border bg-background px-3 py-2 shadow-sm text-sm">
       <div className="font-medium mb-1">{when}</div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-        <span>Temp</span><span className="text-right">{d?.temp_c ?? '—'} °C</span>
-        <span>UR</span><span className="text-right">{d?.rh_pct ?? '—'} %</span>
-        <span>Vento</span><span className="text-right">{d?.wind_ms ?? '—'} m/s</span>
-        <span>Pioggia</span><span className="text-right">{d?.rain_mm ?? '—'} mm</span>
+        <span>Temp</span><span className="text-right">{datum?.temp_c ?? '—'} °C</span>
+        <span>UR</span><span className="text-right">{datum?.rh_pct ?? '—'} %</span>
+        <span>Vento</span><span className="text-right">{datum?.wind_ms ?? '—'} m/s</span>
+        <span>Pioggia</span><span className="text-right">{datum?.rain_mm ?? '—'} mm</span>
       </div>
     </div>
   );
 }
 
 // Tick personalizzato per ruotare le etichette dell'asse X (compatibile con le tipizzazioni)
-function RotatedTick(props: any) {
-  const { x, y, payload } = props;
-  const label = labelOggiDomani(payload?.value ?? '');
+function RotatedTick({ x = 0, y = 0, payload }: RotatedTickProps) {
+  const labelSource = payload?.value ?? '';
+  const label = labelOggiDomani(typeof labelSource === 'string' ? labelSource : String(labelSource));
   const dy = 16; // distanza verticale dal punto Y
   return (
     <text

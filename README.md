@@ -42,7 +42,7 @@ AgriMeteo è una web app in React che combina dati meteorologici orari e logiche
    npm install
    ```
 
-2. Configura l’endpoint AI (facoltativo ma consigliato):
+2. Configura l’endpoint AI (consigliato per lo sviluppo locale; su Vercel l’API integrata risponde su `/api/ai/agronomist-advice`):
 
    ```bash
    cp .env.local .env.local.bak  # se esiste già
@@ -81,6 +81,15 @@ AgriMeteo è una web app in React che combina dati meteorologici orari e logiche
 | `npm run preview`  | Serve la build prodotta da `npm run build`               |
 | `npm run lint`     | Esegue ESLint (alcuni file esterni hanno warning noti)   |
 | `npm run mock:ai`  | Avvia il server mock per il parere agronomico AI         |
+
+## Deploy su Vercel
+
+1. Installa la [Vercel CLI](https://vercel.com/docs/cli) (`npm install -g vercel`) e autentica l’account con `vercel login`.
+2. Dalla root del progetto esegui `vercel` e accetta i default: build command `npm run build`, output directory `dist`, runtime Node 18. L’endpoint backend vive in `api/ai/agronomist-advice.mjs`.
+3. (Opzionale) Imposta l’ambiente `VITE_AI_API_URL` su Vercel come `https://<tuo-progetto>.vercel.app/api/ai/agronomist-advice` se vuoi forzare l’URL assoluto; il frontend usa già questo percorso come default.
+4. Distribuisci in produzione con `vercel --prod` quando sei soddisfatto del risultato.
+
+Suggerimento: per testare frontend e backend insieme in locale puoi usare `vercel dev` oppure continuare ad usare il mock (`npm run mock:ai`) mentre mantieni `VITE_AI_API_URL` puntato al server locale.
 
 ## Stato attuale
 

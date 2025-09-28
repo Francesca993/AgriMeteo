@@ -433,7 +433,11 @@ const SprayabilityIndices = () => {
   const aiPayloadString = useMemo(() => (aiPayload ? JSON.stringify(aiPayload) : null), [aiPayload]);
 
   const adviceToRender = aiAdvice ?? fallbackAdvice;
-  const aiEndpoint = import.meta.env.VITE_AI_API_URL ?? '';
+  const aiEndpoint = (() => {
+    const fromEnv = import.meta.env.VITE_AI_API_URL;
+    if (typeof fromEnv === 'string' && fromEnv.trim()) return fromEnv.trim();
+    return '/api/ai/agronomist-advice';
+  })();
 
   useEffect(() => {
     if (!aiPayloadString || !aiEndpoint) {

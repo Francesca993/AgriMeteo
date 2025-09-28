@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMap } from 'react-leaflet';
 import { MapContainer, TileLayer, Marker, useMapEvents, Circle } from 'react-leaflet';
-import L from 'leaflet';
+import L, { type LatLngExpression, type PathOptions } from 'leaflet';
 // Vite-friendly imports for leaflet marker images
 import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png?url';
 import markerIconUrl from 'leaflet/dist/images/marker-icon.png?url';
@@ -27,9 +27,11 @@ import { Flag } from 'lucide-react';
 
 // ---------- Leaflet icon fix (Vite/Next bundlers) ----------
 try {
-  // @ts-ignore
+  // @ts-expect-error Leaflet type does not expose this private field
   delete L.Icon.Default.prototype._getIconUrl;
-} catch {}
+} catch {
+  /* noop */
+}
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2xUrl,
   iconUrl: markerIconUrl,
@@ -61,6 +63,16 @@ type WeatherNorm = {
   };
 };
 
+type NominatimResult = {
+  lat: string;
+  lon: string;
+  display_name?: string;
+};
+
+type ReverseGeocodeResult = {
+  display_name?: string;
+};
+
 const center = { lat: 44.4968, lng: 11.3548 }; // default center (Italy)
 
 function hhmm(ts: string) {
@@ -73,6 +85,19 @@ function hhmm(ts: string) {
 
 function sum(arr: (number | null | undefined)[]) {
   return arr.reduce((s, v) => s + (typeof v === 'number' ? v : 0), 0);
+}
+
+function toErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
+
+function isNominatimResult(value: unknown): value is NominatimResult {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.lat === 'string' && typeof record.lon === 'string';
 }
 
 // Sprayability rules v0
@@ -181,23 +206,27 @@ const Map = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const mapDefaultCenter: LatLngExpression = [center.lat, center.lng];
+  const selectionCircleOptions: PathOptions = { color: '#16a34a', opacity: 0.5 };
+
   // Fetch weather when selecting a point
   useEffect(() => {
     if (!selectedArea) return;
+    const { lat, lng } = selectedArea;
     (async () => {
       setLoading(true);
       setError(null);
       setWeather(null);
       try {
-        const data = await fetchOpenMeteo(selectedArea.lat, selectedArea.lng);
+        const data = await fetchOpenMeteo(lat, lng);
         setWeather(data);
-      } catch (e: any) {
-        setError(e?.message || 'Errore sconosciuto');
+      } catch (err) {
+        setError(toErrorMessage(err, 'Errore sconosciuto'));
       } finally {
         setLoading(false);
       }
     })();
-  }, [selectedArea?.lat, selectedArea?.lng]);
+  }, [selectedArea]);
 
   // Compute sprayability labels & windows
   const sprayability = useMemo(() => {
@@ -232,8 +261,8 @@ const Map = () => {
         onCenter({ lat, lng });
         try {
           map.setView([lat, lng], 13);
-        } catch (e) {
-          // ignore
+        } catch (mapError: unknown) {
+          console.warn('Impossibile aggiornare la vista della mappa', mapError);
         }
       }
     }, [location.search, map, onCenter]);
@@ -268,24 +297,32 @@ const Map = () => {
                 const q = encodeURIComponent(query.trim());
                 const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`;
                 const res = await fetch(url, { headers: { 'Accept-Language': 'it' } });
-                const list = await res.json();
-                if (!list || list.length === 0) {
+                const payload: unknown = await res.json();
+                if (!Array.isArray(payload) || payload.length === 0 || !isNominatimResult(payload[0])) {
                   alert('Nessun risultato trovato');
                   return;
                 }
-                const place = list[0];
+                const place = payload[0];
                 const lat = parseFloat(place.lat);
                 const lon = parseFloat(place.lon);
-                const display = place.display_name || '';
+                const display = typeof place.display_name === 'string' ? place.display_name : '';
                 // set selected area and update query params so QueryMapCenter recenters as well
                 setSelectedArea({ lat, lng: lon });
                 if (display) {
                   setSelectedName(display);
-                  try { localStorage.setItem('agri:selectedPlaceName', display); } catch {}
+                  try {
+                    localStorage.setItem('agri:selectedPlaceName', display);
+                  } catch {
+                    /* noop */
+                  }
                 }
-                try { localStorage.setItem('agri:selectedPlaceCoords', `${lat.toFixed(5)}, ${lon.toFixed(5)}`); } catch {}
+                try {
+                  localStorage.setItem('agri:selectedPlaceCoords', `${lat.toFixed(5)}, ${lon.toFixed(5)}`);
+                } catch {
+                  /* noop */
+                }
                 navigate(`/map?lat=${lat.toFixed(5)}&lng=${lon.toFixed(5)}`);
-              } catch (err) {
+              } catch (err: unknown) {
                 console.error(err);
                 alert('Errore nel geocoding');
               }
@@ -310,14 +347,11 @@ const Map = () => {
       <div className="flex h-[calc(100vh-4rem)]">
         {/* Map Area */}
         <div className="flex-1 relative">
-          <MapContainer {...({ center: [center.lat, center.lng], zoom: 6, className: 'w-full h-full' } as any)}>
+          <MapContainer center={mapDefaultCenter} zoom={6} className="w-full h-full">
             <QueryMapCenter onCenter={(latlng) => setSelectedArea(latlng)} />
             <TileLayer
-              {...({
-                attribution:
-                  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-              } as any)}
+              attribution="&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors"
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <ClickHandler onSelect={(latlng) => {
               // set selected area and reverse-geocode to get a friendly name
@@ -326,13 +360,24 @@ const Map = () => {
                 try {
                   const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latlng.lat}&lon=${latlng.lng}&zoom=10&addressdetails=1`;
                   const res = await fetch(url, { headers: { 'Accept-Language': 'it' } });
-                  const j = await res.json();
-                  const name = j?.display_name || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+                  const payload: unknown = await res.json();
+                  const reverse = (payload ?? {}) as ReverseGeocodeResult;
+                  const name = typeof reverse.display_name === 'string'
+                    ? reverse.display_name
+                    : `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
                   setSelectedName(name);
-                  try { localStorage.setItem('agri:selectedPlaceName', name); } catch {}
-                  try { localStorage.setItem('agri:selectedPlaceCoords', `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`); } catch {}
-                } catch (e) {
-                  // ignore reverse geocode errors
+                  try {
+                    localStorage.setItem('agri:selectedPlaceName', name);
+                  } catch {
+                    /* noop */
+                  }
+                  try {
+                    localStorage.setItem('agri:selectedPlaceCoords', `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`);
+                  } catch {
+                    /* noop */
+                  }
+                } catch (fetchError: unknown) {
+                  console.warn('Reverse geocoding non disponibile', fetchError);
                 }
               })();
             }} />
@@ -342,7 +387,8 @@ const Map = () => {
                 <Marker position={[selectedArea.lat, selectedArea.lng]} />
                 <Circle
                   center={[selectedArea.lat, selectedArea.lng]}
-                  {...({ radius: 250, pathOptions: { color: '#16a34a', opacity: 0.5 } } as any)}
+                  radius={250}
+                  pathOptions={selectionCircleOptions}
                 />
               </>
             )}
