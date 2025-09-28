@@ -212,6 +212,19 @@ const Map = () => {
   const mapDefaultCenter: LatLngExpression = [center.lat, center.lng];
   const selectionCircleOptions: PathOptions = { color: '#16a34a', opacity: 0.5 };
 
+  const SelectedPointCard = () => (
+    <Card className="shadow-card-soft">
+      <CardContent className="p-4">
+        <p className="text-sm text-muted-foreground mb-2">Clicca sulla mappa per selezionare un&apos;area</p>
+        {selectedArea && (
+          <div className="text-xs text-foreground">
+            Lat: {selectedArea.lat.toFixed(5)}, Lng: {selectedArea.lng.toFixed(5)}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   // Fetch weather when selecting a point
   useEffect(() => {
     if (!selectedArea) return;
@@ -347,10 +360,10 @@ const Map = () => {
         </div>
       </div>
 
-      <div className="flex h-[calc(100vh-4rem)]">
+      <div className="flex flex-col gap-6 lg:flex-row lg:h-[calc(100vh-4rem)]">
         {/* Map Area */}
-        <div className="flex-1 relative">
-          <MapContainer center={mapDefaultCenter} zoom={6} className="w-full h-full">
+        <div className="relative flex-1 min-h-[340px] lg:min-h-0">
+          <MapContainer center={mapDefaultCenter} zoom={6} className="w-full h-[60vh] lg:h-full">
             <QueryMapCenter onCenter={(latlng) => setSelectedArea(latlng)} />
             <TileLayer attribution={TILE_ATTRIBUTION} url={TILE_URL} />
             <ClickHandler onSelect={(latlng) => {
@@ -394,24 +407,13 @@ const Map = () => {
             )}
           </MapContainer>
 
-          <div className="absolute top-4 left-4 z-50">
-            <Card className="shadow-card-soft">
-              <CardContent className="p-4">
-                <p className="text-sm text-muted-foreground mb-2">
-                  Clicca sulla mappa per selezionare un&apos;area
-                </p>
-                {selectedArea && (
-                  <div className="text-xs text-foreground">
-                    Lat: {selectedArea.lat.toFixed(5)}, Lng: {selectedArea.lng.toFixed(5)}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+          <div className="absolute top-4 left-4 z-50 hidden lg:block">
+            <SelectedPointCard />
           </div>
         </div>
 
         {/* Side Panel */}
-        <div className="w-96 bg-background border-l border-border overflow-y-auto">
+        <div className="w-full lg:w-96 bg-background border-t border-border lg:border-t-0 lg:border-l overflow-y-auto max-h-[480px] lg:max-h-none">
           {!selectedArea ? (
             <div className="p-6 text-center">
               <MapPin className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
@@ -422,6 +424,9 @@ const Map = () => {
             </div>
           ) : (
             <div className="p-6 space-y-6">
+              <div className="lg:hidden">
+                <SelectedPointCard />
+              </div>
               {/* Loading / Error */}
               {loading && (
                 <Card className="shadow-card-soft">
