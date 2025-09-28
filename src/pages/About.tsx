@@ -146,7 +146,7 @@ const About = () => {
           <div className="flex items-center justify-center space-x-4 text-muted-foreground">
             <div className="flex items-center">
               <Mail className="w-4 h-4 mr-2" />
-              <span className="text-sm">info@agrimeteo.app</span>
+              <span className="text-sm">montinifrancesca993@gmail.com</span>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-4">
