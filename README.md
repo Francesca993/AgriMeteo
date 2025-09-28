@@ -2,6 +2,9 @@
 
 AgriMeteo è una web app in React che combina dati meteorologici orari e logiche agronomiche di base per aiutare aziende agricole e tecnici a pianificare i trattamenti. Il progetto nasce come prototipo "portfolio friendly", ma tutte le funzionalità presenti sono pienamente operative in locale.
 
+## LINK
+**https://agri-meteo.vercel.app**
+
 ## Funzionalità principali
 
 - **Home di presentazione** (`/`) con panoramica dell'app e call-to-action verso le sezioni chiave.
@@ -82,15 +85,6 @@ AgriMeteo è una web app in React che combina dati meteorologici orari e logiche
 | `npm run lint`     | Esegue ESLint (alcuni file esterni hanno warning noti)   |
 | `npm run mock:ai`  | Avvia il server mock per il parere agronomico AI         |
 
-## Deploy su Vercel
-
-1. Installa la [Vercel CLI](https://vercel.com/docs/cli) (`npm install -g vercel`) e autentica l’account con `vercel login`.
-2. Dalla root del progetto esegui `vercel` e accetta i default: build command `npm run build`, output directory `dist`, runtime Node 18. L’endpoint backend vive in `api/ai/agronomist-advice.mjs`.
-3. (Opzionale) Imposta l’ambiente `VITE_AI_API_URL` su Vercel come `https://<tuo-progetto>.vercel.app/api/ai/agronomist-advice` se vuoi forzare l’URL assoluto; il frontend usa già questo percorso come default.
-4. Distribuisci in produzione con `vercel --prod` quando sei soddisfatto del risultato.
-
-Suggerimento: per testare frontend e backend insieme in locale puoi usare `vercel dev` oppure continuare ad usare il mock (`npm run mock:ai`) mentre mantieni `VITE_AI_API_URL` puntato al server locale.
-
 ## Stato attuale
 
 - Funzioni confermate: mappa interattiva, fetch Open-Meteo, calcolo sprayability, card analisi con finestre operative, integrazione mock AI.
@@ -106,3 +100,18 @@ Suggerimento: per testare frontend e backend insieme in locale puoi usare `verce
 ## Licenza
 
 Questo progetto è distribuito per fini didattici/portfolio. Verifica le licenze delle API esterne (Open-Meteo, tile provider) prima di un uso in produzione.
+
+## 🌟 About Me
+
+I'm a Web Developer passionate about creating beautiful and functional web applications. This portfolio represents my journey in tech, showcasing my skills and projects while maintaining a personal touch that reflects my love for travel and digital nomad lifestyle.
+
+## 📫 Contact
+
+Feel free to reach out to me through:
+- LinkedIn: www.linkedin.com/in/francesca-montini
+- GitHub: https://github.com/Francesca993
+- Email: montinifrancesca993@gmail.com
+
+---
+
+Made with ❤️ by Francesca Montini
